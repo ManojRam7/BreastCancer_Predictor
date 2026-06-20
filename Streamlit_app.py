@@ -1,56 +1,102 @@
-import streamlit as st
-import pickle
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
 import pandas as pd
-import numpy as np
+import streamlit as st
 from sklearn.datasets import load_breast_cancer
 
-# Load the trained model
-MODEL_FILE = 'finalized_model.pkl'
-with open(MODEL_FILE, 'rb') as file:
-    model = pickle.load(file)
+PROJECT_ROOT = Path(__file__).resolve().parent
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
-# App title
-st.title("Breast Cancer Prediction App")
+from breast_cancer_predictor.predict import (  # noqa: E402
+    ModelArtifactsNotFoundError,
+    default_input_row,
+    load_artifacts,
+)
 
-# Description
-st.write("""
-This app predicts whether a breast cancer cell is malignant or benign based on user inputs.
-""")
 
-# Sidebar for user inputs
-st.sidebar.header("Input Features")
+st.set_page_config(page_title="Breast Cancer Predictor", page_icon="🧪", layout="wide")
 
-# Load dataset to provide feature information
-data = load_breast_cancer()
-feature_names = data['feature_names']
+st.markdown(
+    """
+    <style>
+        .main-title {font-size: 2.2rem; font-weight: 700; margin-bottom: 0.2rem;}
+        .subtitle {color: #385170; margin-top: 0; margin-bottom: 1.4rem;}
+        .metric-card {padding: 0.4rem 0.8rem; border-radius: 10px; background: #f5f7fb;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-# Dynamic sliders for features
-def user_input_features():
-    input_data = {}
+st.markdown('<p class="main-title">Breast Cancer Prediction Dashboard</p>', unsafe_allow_html=True)
+st.markdown(
+    '<p class="subtitle">Clinical-style binary classification demo built on the Wisconsin dataset.</p>',
+    unsafe_allow_html=True,
+)
+
+
+@st.cache_data
+def get_dataset() -> tuple[pd.DataFrame, list[str]]:
+    dataset = load_breast_cancer(as_frame=True)
+    return dataset.data.copy(), list(dataset.data.columns)
+
+
+try:
+    model, metrics = load_artifacts()
+except ModelArtifactsNotFoundError as exc:
+    st.error(str(exc))
+    st.info("Run: python scripts/train_model.py")
+    st.stop()
+
+features_df, feature_names = get_dataset()
+default_row = default_input_row()
+
+left_col, right_col = st.columns([1.35, 1])
+
+with right_col:
+    st.subheader("Model Snapshot")
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Accuracy", f"{metrics['accuracy']:.3f}")
+    m2.metric("F1", f"{metrics['f1']:.3f}")
+    m3.metric("ROC AUC", f"{metrics['roc_auc']:.3f}")
+    st.caption("Metrics are computed on a stratified holdout split.")
+
+with left_col:
+    st.subheader("Patient Feature Inputs")
+    input_payload: dict[str, float] = {}
     for feature in feature_names:
-        min_val = float(data['data'][:, list(feature_names).index(feature)].min())
-        max_val = float(data['data'][:, list(feature_names).index(feature)].max())
-        mean_val = float(data['data'][:, list(feature_names).index(feature)].mean())
-        input_data[feature] = st.sidebar.slider(feature, min_val, max_val, mean_val)
-    return np.array([list(input_data.values())])
+        series = features_df[feature]
+        input_payload[feature] = st.slider(
+            label=feature,
+            min_value=float(series.min()),
+            max_value=float(series.max()),
+            value=float(default_row.iloc[0][feature]),
+            step=float((series.max() - series.min()) / 200) if series.max() > series.min() else 0.01,
+        )
 
-input_features = user_input_features()
+input_df = pd.DataFrame([input_payload])
 
-# Display user inputs
-st.subheader("User Input Features")
-st.write(pd.DataFrame(input_features, columns=feature_names))
+predict_col, preview_col = st.columns([1, 1])
+with predict_col:
+    if st.button("Run Prediction", type="primary", use_container_width=True):
+        prediction = int(model.predict(input_df)[0])
+        probabilities = model.predict_proba(input_df)[0]
 
-# Prediction
-if st.button("Predict"):
-    prediction = model.predict(input_features)
-    prediction_proba = model.predict_proba(input_features)
-    
-    # Display results
-    if prediction[0] == 0:
-        st.success("The model predicts the cell is **Benign**.")
-    else:
-        st.error("The model predicts the cell is **Malignant**.")
-    
-    st.subheader("Prediction Probabilities")
-    st.write(f"Benign: {prediction_proba[0][0]:.2f}")
-    st.write(f"Malignant: {prediction_proba[0][1]:.2f}")
+        benign_prob = float(probabilities[1])
+        malignant_prob = float(probabilities[0])
+
+        if prediction == 1:
+            st.success("Prediction: Benign")
+        else:
+            st.error("Prediction: Malignant")
+
+        st.write(f"Benign probability: {benign_prob:.3f}")
+        st.write(f"Malignant probability: {malignant_prob:.3f}")
+
+with preview_col:
+    st.subheader("Input Preview")
+    st.dataframe(input_df, use_container_width=True)
