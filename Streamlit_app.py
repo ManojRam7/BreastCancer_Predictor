@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-from sklearn.datasets import load_breast_cancer
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 SRC_DIR = PROJECT_ROOT / "src"
@@ -17,6 +16,7 @@ from breast_cancer_predictor.predict import (  # noqa: E402
     default_input_row,
     load_artifacts,
 )
+from breast_cancer_predictor.data import load_dataset  # noqa: E402
 
 
 st.set_page_config(page_title="Breast Cancer Predictor", page_icon="🧪", layout="wide")
@@ -41,8 +41,8 @@ st.markdown(
 
 @st.cache_data
 def get_dataset() -> tuple[pd.DataFrame, list[str]]:
-    dataset = load_breast_cancer(as_frame=True)
-    return dataset.data.copy(), list(dataset.data.columns)
+    features, _ = load_dataset()
+    return features.copy(), list(features.columns)
 
 
 try:
